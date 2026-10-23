@@ -1,0 +1,13 @@
+# Never in the image: secrets, tests, caches, local voices and model weights.
+.env
+.env.*
+tests/
+__pycache__/
+*.pyc
+.pytest_cache/
+README.md
+colab/
+data/
+*.wav
+*.pt
+*.safetensors

@@ -1,0 +1,12 @@
+# Never in the image: secrets, dependencies (installed in the image), build output.
+node_modules
+.next
+out
+.env
+.env.*
+npm-debug.log*
+*.tsbuildinfo
+coverage
+.vercel
+Dockerfile
+.dockerignore

@@ -1,0 +1,18 @@
+# Never in the image: secrets, local state, caches, tests output.
+.env
+.env.*
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+storage
+.cache
+*.log
+*.db
+*.sqlite3

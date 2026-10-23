@@ -1,0 +1,42 @@
+# Reverse proxy with automatic HTTPS (Let's Encrypt) for DOMAIN.
+# DNS for DOMAIN must point at this server and ports 80/443 must be reachable.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# API, including real-time voice WebSockets (Caddy proxies upgrades as-is).
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			header_up X-Request-ID {http.request.uuid}
+			# Long-lived WebSockets and slow speech generation.
+			transport http {
+				read_timeout 15m
+				write_timeout 15m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	request_body {
+		# Uploads are validated by the backend too (MAX_UPLOAD_SIZE_MB).
+		max_size 60MB
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

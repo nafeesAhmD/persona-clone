@@ -1,0 +1,118 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-clone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clone}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_clone}
+    # Published on this computer only (127.0.0.1), never on the network.
+    ports:
+      # Bound to localhost only: the database must never be reachable from the network.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      # Bound to localhost only: Qdrant has no auth unless QDRANT_API_KEY is set.
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    # The image has no curl/wget; bash's /dev/tcp asks /readyz directly.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Inside the Compose network services are reached by name, not localhost.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-clone}:${POSTGRES_PASSWORD:-clone}@postgres:5432/${POSTGRES_DB:-ai_clone}
+      QDRANT_URL: http://qdrant:6333
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3007}
+      VOICE_CLONE_SERVICE_TOKEN: ${VOICE_CLONE_SERVICE_TOKEN:-}
+    ports:
+      - "${BACKEND_PORT:-8003}:8000"
+    volumes:
+      - model_cache:/app/.cache
+      # Uploaded knowledge files survive container rebuilds and restarts.
+      - document_storage:/app/storage
+      # Generated speech, kept apart from knowledge files and cleaned up after
+      # VOICE_AUDIO_RETENTION_HOURS.
+      - voice_audio:/app/storage/voice
+    restart: unless-stopped
+    # The image's HEALTHCHECK probes /api/health/live (liveness).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    environment:
+      # Server-side rendering of public clone pages (/c/{slug}) reaches the API
+      # inside the Compose network; browsers keep using NEXT_PUBLIC_API_URL.
+      API_INTERNAL_URL: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-3007}:3000"
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  # Optional self-hosted voice cloning (Chatterbox Multilingual, CPU). Only
+  # started with `docker compose --profile voice-clone up`, so a plain
+  # `docker compose up` never builds torch or downloads model weights.
+  # Internal only: the backend reaches it at http://voice-clone:8100.
+  voice-clone:
+    build: ./voice-clone
+    profiles: ["voice-clone"]
+    environment:
+      VOICE_CLONE_SERVICE_TOKEN: ${VOICE_CLONE_SERVICE_TOKEN:-}
+      SYNTH_TIMEOUT_SECONDS: ${SYNTH_TIMEOUT_SECONDS:-240}
+      HF_HOME: /root/.cache/huggingface
+      # Generous timeouts for the first-run weight download on slow links.
+      HF_HUB_DOWNLOAD_TIMEOUT: "60"
+      HF_HUB_ETAG_TIMEOUT: "30"
+      # The xet transfer protocol stalls on some networks; plain HTTPS downloads are reliable.
+      HF_HUB_DISABLE_XET: "1"
+    volumes:
+      # Reference voices (/data/voices/<voice_id>.wav).
+      - voice_clone_data:/data
+      # Model weights (~3 GB) downloaded from Hugging Face on first start.
+      - voice_clone_models:/root/.cache/huggingface
+    # The ~500M-param model needs about 3-4 GB of RAM while generating on CPU.
+    mem_limit: 6g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  model_cache:
+  document_storage:
+  voice_audio:
+  voice_clone_data:
+  voice_clone_models:

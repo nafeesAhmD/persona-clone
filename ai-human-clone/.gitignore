@@ -1,0 +1,33 @@
+# Secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Backups (scripts/backup.sh) never belong in Git
+backups/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+npm-debug.log*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+.playwright-mcp/

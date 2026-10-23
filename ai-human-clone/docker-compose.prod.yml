@@ -1,0 +1,186 @@
+# Production stack (standalone, not an override of docker-compose.yml).
+#
+#   cp .env.production.example .env.production   # fill in real values, never commit it
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Only Caddy publishes ports (80/443). PostgreSQL, Qdrant, the API and the frontend are
+# reachable only inside the "internal" network. Migrations run once in the `migrate`
+# service before the backend starts. See docs/PRODUCTION_DEPLOYMENT.md.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# Shared by `migrate` and `backend` (each sets RUN_MIGRATIONS_ON_START itself).
+x-backend-env: &backend-env
+  ENVIRONMENT: production
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  QDRANT_URL: http://qdrant:6333
+  QDRANT_API_KEY: ${QDRANT_API_KEY}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      # Superuser for administration and backups only; the app uses POSTGRES_APP_USER.
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:?set POSTGRES_SUPERUSER}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?set POSTGRES_APP_USER}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-100}", "-c", "shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/10-init-app-user.sh:ro
+    networks: [internal]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:${QDRANT_VERSION:-latest}
+    environment:
+      # Every request (including from the backend) must send this key.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY}
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - qdrant_snapshots:/qdrant/snapshots
+    networks: [internal]
+    restart: unless-stopped
+    mem_limit: ${QDRANT_MEM_LIMIT:-1g}
+    logging: *logging
+    healthcheck:
+      # /readyz needs no API key. The image has no curl/wget, so bash's /dev/tcp is used.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # One-shot: applies Alembic migrations, then exits. The backend waits for it to succeed,
+  # so several backend starts never run migrations at the same time.
+  migrate:
+    build:
+      context: ./backend
+      target: runtime
+    image: ai-human-clone-backend:${IMAGE_TAG:-latest}
+    command: ["python", "-m", "app.db.migrate"]
+    env_file:
+      - path: ${ENV_FILE:-.env.production}
+        required: true
+    environment:
+      <<: *backend-env
+      # This service exists to migrate (app.db.migrate exits early when this is false).
+      RUN_MIGRATIONS_ON_START: "true"
+    networks: [internal]
+    restart: "no"
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    image: ai-human-clone-backend:${IMAGE_TAG:-latest}
+    env_file:
+      - path: ${ENV_FILE:-.env.production}
+        required: true
+    environment:
+      <<: *backend-env
+      # Migrations already ran in `migrate`; restarts never race on them.
+      RUN_MIGRATIONS_ON_START: "false"
+    volumes:
+      - model_cache:/app/.cache
+      - document_storage:/app/storage
+      - voice_audio:/app/storage/voice
+    networks: [internal]
+    restart: unless-stopped
+    # uvicorn finishes in-flight requests on SIGTERM (--timeout-graceful-shutdown 20).
+    stop_grace_period: 30s
+    mem_limit: ${BACKEND_MEM_LIMIT:-3g}
+    logging: *logging
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # The only value baked into the browser bundle: the public API origin.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?set PUBLIC_API_URL (e.g. https://your-domain)}
+    image: ai-human-clone-frontend:${IMAGE_TAG:-latest}
+    environment:
+      API_INTERNAL_URL: http://backend:8000
+    networks: [internal]
+    restart: unless-stopped
+    mem_limit: ${FRONTEND_MEM_LIMIT:-512m}
+    logging: *logging
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal]
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: *logging
+    depends_on:
+      - frontend
+      - backend
+
+  # Optional self-hosted voice cloning: --profile voice-clone. Internal only.
+  voice-clone:
+    build: ./voice-clone
+    image: ai-human-clone-voice-clone:${IMAGE_TAG:-latest}
+    profiles: ["voice-clone"]
+    environment:
+      # Required when this profile runs (the service refuses unauthenticated calls otherwise).
+      VOICE_CLONE_SERVICE_TOKEN: ${VOICE_CLONE_SERVICE_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_DISABLE_XET: "1"
+    volumes:
+      - voice_clone_data:/data
+      - voice_clone_models:/root/.cache/huggingface
+    networks: [internal]
+    restart: unless-stopped
+    mem_limit: 6g
+    logging: *logging
+
+networks:
+  internal:
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  qdrant_snapshots:
+  model_cache:
+  document_storage:
+  voice_audio:
+  voice_clone_data:
+  voice_clone_models:
+  caddy_data:
+  caddy_config:

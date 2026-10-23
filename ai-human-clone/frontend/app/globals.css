@@ -1,0 +1,195 @@
+@import "tailwindcss";
+
+/* Short screens (phones in landscape): tighter app chrome so content keeps room. */
+@custom-variant short (@media (max-height: 31.25rem));
+/* Phones with little height (small portrait phones, landscape, keyboard open): the
+   chat composer collapses its optional rows. */
+@custom-variant compact (@media (max-width: 47.99rem) and (max-height: 46.25rem));
+
+@theme {
+  --color-surface: #0d1117;
+  --color-surface-raised: #131722;
+  --color-border: #232838;
+  --color-muted: #8b93a7;
+  --color-accent: #ff6b35;
+  --color-accent-soft: #ff9b6a;
+  --color-ink: #16100c;
+  --color-strip: #111621;
+  --color-cyan: #38d9f5;
+
+  --animate-float: float 6s ease-in-out infinite;
+
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-14px);
+    }
+  }
+}
+
+/*
+ * App frame sizes (Phase 15). Full-height screens can size themselves with
+ * h-[calc(100dvh-var(--app-header-h))]. The top bar is 4rem plus the notch area
+ * (viewport-fit=cover) plus its 1px bottom border; the mobile bottom nav is 4rem
+ * plus the home-indicator area.
+ */
+:root {
+  --app-header-h: calc(4rem + 1px + env(safe-area-inset-top, 0px));
+  --app-bottom-nav-h: calc(4rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Phones in landscape: the mobile top bar shrinks to 3rem (MobileTopBar uses short:h-12). */
+@media (max-width: 47.99rem) and (max-height: 31.25rem) {
+  :root {
+    --app-header-h: calc(3rem + 1px + env(safe-area-inset-top, 0px));
+  }
+}
+
+html {
+  color-scheme: dark;
+  /* Anchor links (#section) land below the sticky top bar. */
+  scroll-padding-top: calc(var(--app-header-h) + 0.5rem);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: #e6e8ef;
+  overflow-x: clip;
+}
+
+/* Visible keyboard focus everywhere (mouse clicks don't show it). */
+:focus-visible {
+  outline: 2px solid var(--color-accent-soft);
+  outline-offset: 2px;
+}
+
+/* Programmatic focus targets (skip-link target, headings) don't need a ring. */
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Phones: 16px text in form fields stops iOS Safari from zooming in on focus.
+ * Unlayered, so it wins over text-sm utilities on inputs below the md breakpoint.
+ */
+@media (max-width: 47.99rem) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Safe-area padding (notches, home indicator) as real Tailwind utilities, so variants like md: work. */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+/* Space so page content never hides behind the mobile bottom navigation. */
+@utility pb-bottom-nav {
+  padding-bottom: var(--app-bottom-nav-h);
+}
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/*
+ * Responsive data table (components/admin/ui.tsx <Table>). Below md each row
+ * becomes a card; each cell shows its column name from data-label.
+ */
+@media (max-width: 47.99rem) {
+  .rtable {
+    min-width: 0 !important;
+  }
+  .rtable thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .rtable,
+  .rtable tbody,
+  .rtable tr,
+  .rtable td {
+    display: block;
+    width: 100%;
+  }
+  .rtable tbody {
+    border: 0;
+  }
+  .rtable tr {
+    padding: 0.75rem 0.25rem;
+  }
+  /* The label floats in the left padding (a 7rem column), so the whole cell
+     content - however many lines or elements - stays together in the value column.
+     flow-root keeps the cell at least as tall as a wrapped label. */
+  .rtable td {
+    display: flow-root;
+    padding-left: 8.5rem;
+    max-width: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+  .rtable td::before {
+    content: attr(data-label);
+    float: left;
+    width: 7rem;
+    margin-left: -7.75rem;
+    color: var(--color-muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-top: 0.125rem;
+  }
+  /* Action cells (no column name) use the full width. */
+  .rtable td[data-label=""] {
+    display: block;
+    padding-left: 0.75rem;
+  }
+  .rtable td[data-label=""]::before {
+    content: none;
+  }
+  .rtable td[data-label=""] > div {
+    justify-content: flex-start;
+  }
+  .rtable td:empty {
+    display: none;
+  }
+  .rtable td[colspan] {
+    display: block;
+    padding-left: 0.75rem;
+    text-align: center;
+  }
+  .rtable td[colspan]::before {
+    content: none;
+  }
+}

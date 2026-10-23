@@ -1,0 +1,30 @@
+# Runtime dependencies for the voice clone service (Docker image only).
+#
+# CPU-only PyTorch: the "+cpu" local version tags force the wheels from the
+# PyTorch CPU index instead of the multi-GB CUDA builds on PyPI.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+torchaudio==2.6.0+cpu
+
+# Web service
+fastapi==0.142.2
+uvicorn==0.54.0
+python-multipart==0.0.32
+soundfile==0.14.0
+soxr==1.1.0
+
+# chatterbox-tts 0.1.7 itself is installed with --no-deps (see Dockerfile) so its
+# gradio==6.8.0 demo-UI pin is not pulled in. These are its remaining runtime
+# requirements, at the versions it pins.
+numpy==1.26.4
+librosa==0.11.0
+s3tokenizer==0.3.0
+transformers==5.2.0
+diffusers==0.29.0
+resemble-perth==1.0.1
+conformer==0.3.2
+safetensors==0.5.3
+spacy-pkuseg==1.0.1
+pykakasi==2.3.0
+omegaconf==2.3.1
+einops==0.8.2
